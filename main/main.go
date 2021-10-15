@@ -3,9 +3,9 @@ package main
 import (
 //	"net/http"
 	"github.com/gin-gonic/gin"
-	"fmt"
 	//"encoding/json"
 	"benschreiber.com/bsql"
+	"benschreiber.com/bres"
 	"regexp"
 	"log"
 	"database/sql"
@@ -16,6 +16,10 @@ func main() {
 	//Establish connection to local db using ./sqlConnector package
 	bsql.Establishconnection()
 	
+	//Establish token pool
+	bres.InitializeTokenMap()
+
+
 	//Define API endpoints
 	router := gin.Default()
 	router.GET("/api/group/:user", getGroup)	
@@ -28,7 +32,8 @@ func main() {
 //TODO: Setup token system, HTTPS
 func getGroup(c *gin.Context) {
 
-	//if !validateAuthentication(c) { return }
+	//Aborts on invalid headers
+	if !bres.ValidateAuthentication(c) { return }
 
 	//Grab user parameter
 	user := c.Param("user")
@@ -36,8 +41,7 @@ func getGroup(c *gin.Context) {
 	//Handle a bad username that contains illegal characters
 	regex, _ := regexp.Compile("[^A-Za-z0-9]+")
 	if regex.MatchString(user) {
-		c.JSON(400, gin.H{"":""})
-		fmt.Println("bad req")
+		c.AbortWithStatus(400)
 		return
 	}
 
@@ -49,13 +53,11 @@ func getGroup(c *gin.Context) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			c.JSON(404, gin.H{"":""})
+			c.AbortWithStatus(404)
 			return
 		} else { log.Fatal(err) }
 	}
 
 	//Accept request, return the query result.
 	c.JSON(200, query)
-	fmt.Println(query)	
-
 }
