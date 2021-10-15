@@ -12,10 +12,10 @@ type Client struct {
 	Expiration time.Time
 }
 
-var tokens map[string]Client
+var tokens map[string]*Client
 
 func InitializeTokenMap() {
-	tokens = make(map[string]Client)
+	tokens = make(map[string]*Client)
 }
 
 func AddToken(ip string, username string) string {
@@ -24,7 +24,7 @@ func AddToken(ip string, username string) string {
 	ret := uuid.New().String()
 
 	//Add a new Client to the tokens map with a 6 hour from now expiration date
-	tokens[ret] = Client{
+	tokens[ret] = &Client{
 	IPAddress: ip,
 	Username: username,
 	Expiration: time.Now().Add(time.Hour * 6),
@@ -33,7 +33,7 @@ func AddToken(ip string, username string) string {
 
 }
 
-func validateHeaders(c *gin.Context, args... string) bool {
+func ValidateHeaders(c *gin.Context, args... string) bool {
 	for _, v := range args {
 		if c.GetHeader(v) == "" { 
 			c.AbortWithStatus(400)
@@ -44,11 +44,10 @@ func validateHeaders(c *gin.Context, args... string) bool {
 }
 
 
-//TODO: Get IP Addresses working
 func ValidateAuthentication(c *gin.Context) bool {
 	
 	//Validate all headers are present in request
-	if !validateHeaders(c, "Token", "Username", "X-FORWARDED-FOR") { return false }
+	if !ValidateHeaders(c, "Token", "Username") { return false }
 
 	//Grab auth fields
 	token := c.GetHeader("Token")
@@ -59,12 +58,12 @@ func ValidateAuthentication(c *gin.Context) bool {
 		c.AbortWithStatus(401)
 		return false
 	} 
-	
+
 	//Validate token fields
 	client := tokens[token]
-	if client.Expiration.After(time.Now()) ||
+	if !client.Expiration.After(time.Now()) ||
 	client.Username != username ||
-	client.IPAddress != c.GetHeader("X-FORWARDED-FOR") {
+	client.IPAddress != c.ClientIP() {
 		//Remove the token because it is comprimised
 		delete(tokens, token)
 		c.AbortWithStatus(401)
