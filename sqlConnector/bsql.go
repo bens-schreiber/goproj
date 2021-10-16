@@ -3,7 +3,6 @@ package bsql
 import (
 	"database/sql"
 	//"errors"
-	"fmt"
 	"github.com/go-sql-driver/mysql"
 	"log"
 )
@@ -12,10 +11,11 @@ var db *sql.DB
 
 //SQL table structs
 type Group struct {
-	ID      string `json:"id"`
-	Token   int    `json:"token"`
-	Creator string `json:"creator"`
-	TokenHolder string `json:"token_holder"`
+	ID          string   `json:"id"`
+	Token       int      `json:"token"`
+	Creator     string   `json:"creator"`
+	TokenHolder string   `json:"token_holder"`
+	Members     []string `json:"members"`
 }
 
 type GroupMember struct {
@@ -28,14 +28,77 @@ type User struct {
 	Password string `json:"password"`
 }
 
-//TODO: multiple params???!?!?!?!?
-func QueryDB(param string, query string, args... interface{}) (error) {
+var insertUserQuery *sql.Stmt
 
-	//Use a PreparedStatement to run query
-	stmt, err := db.Prepare(query)
-	if err != nil {log.Fatal(err)}
+func InsertNewUser(user string, pass string) (sql.Result, error) {
+	return insertUserQuery.Exec(user, pass)
+}
 
-	return  stmt.QueryRow(param).Scan(args...)
+var userExistsQuery *sql.Stmt
+
+func ValidateUserExists(user string) bool {
+	//Temp fix, .Err() does not seem to return ErrNoRows properly
+	var usr User
+	err := userExistsQuery.QueryRow(user).Scan(&usr.Username, &usr.Password)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Println("user does not exist")
+			return false
+		}
+		log.Fatal(err)
+	}
+
+	return true
+}
+
+var matchUserPassQuery *sql.Stmt
+
+func ValidateCredentials(user string, pass string) bool {
+	err := matchUserPassQuery.QueryRow(user, pass).Err()
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Println("Credentials invalid")
+			return false
+		}
+		log.Fatal(err)
+	}
+
+	return true
+}
+
+var userGroupQuery *sql.Stmt
+var groupUsersQuery *sql.Stmt
+
+func GetUserGroup(user string) (*Group, bool) {
+	var group Group
+
+	err := userGroupQuery.QueryRow(user).Scan(
+		&group.ID,
+		&group.Token,
+		&group.Creator,
+		&group.TokenHolder)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Println("group not found")
+			return nil, false
+		}
+		log.Fatal(err)
+	}
+
+	rows, err := groupUsersQuery.Query(group.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var usr User
+		rows.Scan(&usr.Username)
+		group.Members = append(group.Members, usr.Username)
+	}
+
+	return &group, true
 }
 
 func Establishconnection() {
@@ -59,8 +122,45 @@ func Establishconnection() {
 	if pingErr != nil {
 		log.Fatal(pingErr)
 	}
-	
-	fmt.Println("Connected!")
+
+	setupPrepStates()
+	configLogger()
+	log.Println("Connected to Database!")
+
 }
 
-func main() {}
+//Setup all prepared statements
+func setupPrepStates() {
+	var err error
+
+	insertUserQuery, err = db.Prepare("insert into user(username, password) values (?, ?)")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	userExistsQuery, err = db.Prepare("select * from user where username=?")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	matchUserPassQuery, err = db.Prepare("select * from user where username=? and password=?")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	userGroupQuery, err = db.Prepare("select * from _group where _group.id=(select group_id from group_member where username=?)")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	groupUsersQuery, err = db.Prepare("select username from group_member where group_id=?")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+}
+
+func configLogger() {
+	log.SetFlags(log.Lmsgprefix)
+	log.SetPrefix("[bsql] ")
+}
