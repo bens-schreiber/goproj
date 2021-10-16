@@ -15,6 +15,7 @@ type Group struct {
 	ID      string `json:"id"`
 	Token   int    `json:"token"`
 	Creator string `json:"creator"`
+	TokenHolder string `json:"token_holder"`
 }
 
 type GroupMember struct {
@@ -27,6 +28,7 @@ type User struct {
 	Password string `json:"password"`
 }
 
+//TODO: multiple params???!?!?!?!?
 func QueryDB(param string, query string, args... interface{}) (error) {
 
 	//Use a PreparedStatement to run query

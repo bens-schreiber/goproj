@@ -10,7 +10,7 @@ import (
 	"database/sql"
 )
 
-//TODO: setup token system, setup ratelimiting
+//TODO: setup ratelimiting
 func main() {
 
 	//Establish connection to local db using ./sqlConnector package
@@ -23,30 +23,39 @@ func main() {
 	router := gin.Default()
 	router.GET("/api/group/:user", getGroup)	
 	router.POST("/api/client/login", loginClient)
+	router.POST("/api/client/register", registerClient)
 
 	//port 8080
 	router.Run()
 }
 
-func loginClient(c *gin.Context) {
-
-	//Aborts on invalid headers
+//Setup the insert query
+func registerClient(c *gin.Context) {
 	if !bres.ValidateHeaders(c, "Username", "Password") { return }
 
 	user := c.GetHeader("Username")
 	pass := c.GetHeader("Password")
 
-	//Handle a bad username that contains illegal characters
-	if regex, _ := regexp.Compile("[^A-Za-z0-9]+"); regex.MatchString(user) {
-		c.AbortWithStatus(400)
-		return
-	}
+	//Validate that the password and username are within the allowed characters
+	if !validateUserPassRegex(c, user, pass) { return }
+	
+	//var Query bsql.User
+	//err :- bsql.QueryDB(
 
-	//See if password contains any whitespaces
-	if regex, _ := regexp.Compile("\\s+"); regex.MatchString(pass) {
-		c.AbortWithStatus(400)
-		return
-	}
+}
+
+
+func loginClient(c *gin.Context) {
+
+	//Aborts on invalid headers
+	if !bres.ValidateHeaders(c, "Username", "Password") { return }
+ 
+	user := c.GetHeader("Username")
+	pass := c.GetHeader("Password")
+	
+	//Validate that the password and username are within the allowed characters
+	if !validateUserPassRegex(c, user, pass) { return }
+
 
 	{
 		var query bsql.User
@@ -97,7 +106,7 @@ func getGroup(c *gin.Context) {
 	var query bsql.Group
 	err := bsql.QueryDB(user,
 	"select * from _group where _group.id=(select group_id from group_member where username=?)",
-	&query.ID, &query.Token, &query.Creator)
+	&query.ID, &query.Token, &query.Creator, &query.TokenHolder)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -108,4 +117,20 @@ func getGroup(c *gin.Context) {
 
 	//Accept request, return the query result.
 	c.JSON(200, query)
+}
+
+func validateUserPassRegex(c *gin.Context, username string, password string) bool {
+	//Handle a bad username that contains illegal characters
+	if regex, _ := regexp.Compile("[^A-Za-z0-9]+"); regex.MatchString(username) {
+		c.AbortWithStatus(400)
+		return false
+	}
+
+	//See if password contains any whitespaces
+	if regex, _ := regexp.Compile("\\s+"); regex.MatchString(password) {
+		c.AbortWithStatus(400)
+		return false
+	}
+
+	return true
 }
