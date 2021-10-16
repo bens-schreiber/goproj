@@ -2,8 +2,8 @@ package bsql
 
 import (
 	"database/sql"
-	//"errors"
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"log"
 )
 
@@ -29,17 +29,15 @@ type User struct {
 }
 
 var insertUserQuery *sql.Stmt
-
 func InsertNewUser(user string, pass string) (sql.Result, error) {
 	return insertUserQuery.Exec(user, pass)
 }
 
 var userExistsQuery *sql.Stmt
-
 func ValidateUserExists(user string) bool {
 	//Temp fix, .Err() does not seem to return ErrNoRows properly
-	var usr User
-	err := userExistsQuery.QueryRow(user).Scan(&usr.Username, &usr.Password)
+	var username string
+	err := userExistsQuery.QueryRow(user).Scan(&username)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Println("user does not exist")
@@ -52,9 +50,9 @@ func ValidateUserExists(user string) bool {
 }
 
 var matchUserPassQuery *sql.Stmt
-
 func ValidateCredentials(user string, pass string) bool {
-	err := matchUserPassQuery.QueryRow(user, pass).Err()
+	var username string
+	err := matchUserPassQuery.QueryRow(user, pass).Scan(&username)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Println("Credentials invalid")
@@ -68,7 +66,6 @@ func ValidateCredentials(user string, pass string) bool {
 
 var userGroupQuery *sql.Stmt
 var groupUsersQuery *sql.Stmt
-
 func GetUserGroup(user string) (*Group, bool) {
 	var group Group
 
@@ -93,12 +90,29 @@ func GetUserGroup(user string) (*Group, bool) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var usr User
-		rows.Scan(&usr.Username)
-		group.Members = append(group.Members, usr.Username)
+		var username string
+		rows.Scan(&username)
+		group.Members = append(group.Members, username)
 	}
 
 	return &group, true
+}
+
+var insertGroupQuery *sql.Stmt
+var insertGroupMemberQuery *sql.Stmt
+func InsertNewGroup(user string) (error) {
+
+	// group id
+	id := uuid.New().String()
+	tokenDefaultValue := 1
+
+	{_, err := insertGroupQuery.Exec(id, tokenDefaultValue, user, user)
+	if err != nil { return err }}
+	
+	_, err := insertGroupMemberQuery.Exec(id, user)
+	if err != nil { return err }
+
+	return nil
 }
 
 func Establishconnection() {
@@ -138,12 +152,12 @@ func setupPrepStates() {
 		log.Fatal(err)
 	}
 
-	userExistsQuery, err = db.Prepare("select * from user where username=?")
+	userExistsQuery, err = db.Prepare("select username from user where username=?")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	matchUserPassQuery, err = db.Prepare("select * from user where username=? and password=?")
+	matchUserPassQuery, err = db.Prepare("select username from user where username=? and password=?")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -158,6 +172,15 @@ func setupPrepStates() {
 		log.Fatal(err)
 	}
 
+	insertGroupQuery, err = db.Prepare("insert into _group(id, token, creator, token_holder) values (?, ?, ?, ?)")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	insertGroupMemberQuery, err = db.Prepare("insert into group_member(group_id, username) values (?, ?)")
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func configLogger() {

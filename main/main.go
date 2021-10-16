@@ -25,11 +25,14 @@ func main() {
 	router.GET("/api/group/:user", getGroup)
 	router.POST("/api/client/login", loginClient)
 	router.POST("/api/client/register", registerClient)
+	router.POST("/api/group/create", postGroup)
 
 	//port 8080
 	router.Run()
 }
 
+
+// POST
 func registerClient(c *gin.Context) {
 
 	//Validate headers exist
@@ -58,13 +61,14 @@ func registerClient(c *gin.Context) {
 		log.Fatal(err)
 	}
 
-	//Return 201 created code
+	// Return 201 created code
 	c.JSON(201, "")
 }
 
+// POST
 func loginClient(c *gin.Context) {
 
-	//Validate headers exist
+	// Validate headers exist
 	if !bres.ValidateHeaders(c, "Username", "Password") {
 		return
 	}
@@ -73,18 +77,18 @@ func loginClient(c *gin.Context) {
 	user := c.GetHeader("Username")
 	pass := c.GetHeader("Password")
 
-	//Validate that the password and username are within the allowed characters
+	// Validate that the password and username are within the allowed characters
 	if !validateUserPassRegex(c, user, pass) {
 		return
 	}
 
-	//If a user with that username isnt found, return 404
+	// If a user with that username isnt found, return 404
 	if !bsql.ValidateUserExists(user) {
 		c.AbortWithStatus(404)
 		return
 	}
 
-	//Validate the credentials the user gave
+	// Validate the credentials the user gave
 	if !bsql.ValidateCredentials(user, pass) {
 		c.AbortWithStatus(401)
 		return
@@ -93,26 +97,59 @@ func loginClient(c *gin.Context) {
 	c.JSON(201, gin.H{"token": bres.AddClient(c.ClientIP(), user)})
 }
 
-func getGroup(c *gin.Context) {
+// POST
+func postGroup(c *gin.Context) {
 
-	//Aborts on invalid auth or headers (token and username are in all requests)
+	// Aborts on invalid auth or headers (token and username are in all requests)
 	if !bres.ValidateAuthentication(c) {
 		return
 	}
 
-	//Grab user parameter
+	// Grab user parameter
+	user := c.GetHeader("Username")
+
+	log.Println(user)
+
+	// Verify the user exists
+	if !bsql.ValidateUserExists(user) {
+		c.AbortWithStatus(404)
+		return
+	}
+	
+	// Register new group
+	if err := bsql.InsertNewGroup(user); err != nil {
+		log.Fatal(err)
+	}
+
+	c.JSON(200, "")
+
+}
+
+
+
+// GET
+func getGroup(c *gin.Context) {
+
+	// Aborts on invalid auth or headers (token and username are in all requests)
+	if !bres.ValidateAuthentication(c) {
+		return
+	}
+
+	// Grab user parameter
 	user := c.Param("user")
 
-	//Handle a bad username that contains illegal characters
+	// Handle a bad username that contains illegal characters
 	if !validateUserPassRegex(c, user, "") {
 		return
 	}
 
+	// Verify the user exists
 	if !bsql.ValidateUserExists(user) {
 		c.AbortWithStatus(404)
 		return
 	}
 
+	// Create group struct
 	group, ok := bsql.GetUserGroup(user)
 	if !ok {
 		c.AbortWithStatus(404)
@@ -123,7 +160,7 @@ func getGroup(c *gin.Context) {
 }
 
 func validateUserPassRegex(c *gin.Context, username string, password string) bool {
-	//Handle a bad username that contains illegal characters
+	// Handle a bad username that contains illegal characters
 	if regex, _ := regexp.Compile("[^A-Za-z0-9]+"); regex.MatchString(username) {
 		log.Println("username does not follow guidelines")
 		c.AbortWithStatus(400)
