@@ -4,6 +4,7 @@ import (
 	"benschreiber.com/bres"
 	"benschreiber.com/bsql"
 	"github.com/gin-gonic/gin"
+	"github.com/go-sql-driver/mysql"
 	"log"
 	"regexp"
 )
@@ -26,11 +27,12 @@ func main() {
 	router.POST("/api/client/login", loginClient)
 	router.POST("/api/client/register", registerClient)
 	router.POST("/api/group/create", postGroup)
+	router.POST("/api/group/join", postGroupMember)
+	router.POST("/api/group/coin", postCoin)
 
 	//port 8080
 	router.Run()
 }
-
 
 // POST
 func registerClient(c *gin.Context) {
@@ -108,24 +110,93 @@ func postGroup(c *gin.Context) {
 	// Grab user parameter
 	user := c.GetHeader("Username")
 
-	log.Println(user)
+	// Verify the user exists
+	if !bsql.ValidateUserExists(user) {
+		c.AbortWithStatus(404)
+		return
+	}
+
+	// Register new group
+	if err := bsql.InsertNewGroup(user); err != nil {
+		log.Fatal(err)
+	}
+
+	c.Status(200)
+
+}
+
+// POST
+func postGroupMember(c *gin.Context) {
+	// Aborts on invalid auth or headers (token and username are in all requests)
+	if !bres.ValidateAuthentication(c) {
+		return
+	}
+
+	// Validate that ID is in the header
+	if !bres.ValidateHeaders(c, "ID") {
+		return
+	}
+
+	// Grab user and group id
+	user := c.GetHeader("Username")
+	id := c.GetHeader("ID")
 
 	// Verify the user exists
 	if !bsql.ValidateUserExists(user) {
 		c.AbortWithStatus(404)
 		return
 	}
-	
-	// Register new group
-	if err := bsql.InsertNewGroup(user); err != nil {
-		log.Fatal(err)
-	}
 
-	c.JSON(200, "")
+	// insert group member to group. if err, see if duplicate entry (group mems + id must be unique)
+	if err := bsql.InsertGroupMember(user, id); err != nil {
+		if _, ok := err.(*mysql.MySQLError); !ok {
+			log.Fatal(err)
+		}
+		if err.(*mysql.MySQLError).Number == 1062 {
+			log.Println("User already in group they tried to join")
+			c.AbortWithStatus(400)
+			return
+		}
+	}
 
 }
 
+// POST
+func postCoin(c *gin.Context) {
+	// Aborts on invalid auth or headers (token and username are in all requests)
+	if !bres.ValidateAuthentication(c) {
+		return
+	}
 
+	// Validate that ID is in the header
+	if !bres.ValidateHeaders(c, "ID") {
+		return
+	}
+
+	// Grab user and group id
+	user := c.GetHeader("Username")
+	id := c.GetHeader("ID")
+
+	// Verify the user exists
+	if !bsql.ValidateUserExists(user) {
+		c.AbortWithStatus(404)
+		return
+	}
+
+	// Return a Forbidden status code if someone who isnt the coin holder makes request
+	if !bres.ValidateCoinRequest(c, user, id) {
+		c.AbortWithStatus(403)
+		return
+	}
+
+	if err1, err2 := bsql.UpdateCoin(user, id); err1 != nil || err2 != nil {
+		log.Fatal(err1)
+		log.Fatal(err2)
+	}
+
+	c.Status(201)
+
+}
 
 // GET
 func getGroup(c *gin.Context) {

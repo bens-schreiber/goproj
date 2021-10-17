@@ -1,6 +1,8 @@
 package bres
 
 import (
+	"benschreiber.com/bsql"
+	"database/sql"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -47,7 +49,7 @@ func AddClient(ip string, username string) string {
 		Username:   username,
 		Expiration: time.Now().Add(time.Hour * 6),
 	}
-	
+
 	user_to_token[username] = ret
 
 	log.Println("Tokens:", tokens)
@@ -77,14 +79,13 @@ func ValidateAuthentication(c *gin.Context) bool {
 	token := c.GetHeader("Token")
 	username := c.GetHeader("Username")
 
-
 	//Check if token exists and is valid
 	if _, ok := tokens[token]; !ok {
 		log.Println("invalid token")
 		c.AbortWithStatus(401)
 		return false
 	}
-	
+
 	//Validate token fields
 	client := tokens[token]
 	if !client.Expiration.After(time.Now()) ||
@@ -97,6 +98,19 @@ func ValidateAuthentication(c *gin.Context) bool {
 		return false
 	}
 	return true
+}
+
+func ValidateCoinRequest(c *gin.Context, user string, id string) bool {
+	err := bsql.SelectCoinHolder(user, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false
+		}
+		log.Fatal(err)
+	}
+
+	return true
+
 }
 
 func configLogger() {
