@@ -1,3 +1,4 @@
+// Define all API endpoints and their algorithms
 package main
 
 import (
@@ -6,10 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 	"log"
-	"regexp"
 )
 
-//TODO: setup ratelimiting
 func main() {
 
 	log.SetPrefix("[main] ")
@@ -23,54 +22,30 @@ func main() {
 
 	//Define API endpoints
 	router := gin.Default()
-	router.GET("/api/group/:user", getGroup)
-	router.POST("/api/client/login", loginClient)
-	router.POST("/api/client/register", registerClient)
-	router.POST("/api/group/create", postGroup)
-	router.POST("/api/group/join", postGroupMember)
-	router.POST("/api/group/coin", postCoin)
+
+	// Client endpoints
+	client := "/api/client/"
+	router.POST(client+"login", loginClient)
+	router.POST(client+"register", registerClient)
+
+	// Group endpoints
+	group := "/api/group/"
+	router.GET(group+":user", getGroup)
+	router.POST(group+"create", postGroup)
+	router.POST(group+"join", postGroupMember)
+	router.POST(group+"coin", postCoin)
 
 	//port 8080
 	router.Run()
 }
 
-// POST
-func registerClient(c *gin.Context) {
-
-	//Validate headers exist
-	if !bres.ValidateHeaders(c, "Username", "Password") {
-		return
-	}
-
-	//Grab headers
-	user := c.GetHeader("Username")
-	pass := c.GetHeader("Password")
-
-	//Validate that the password and username are within the allowed characters
-	if !validateUserPassRegex(c, user, pass) {
-		return
-	}
-
-	//If a user exists with that username, return with Bad Request
-	if bsql.ValidateUserExists(user) {
-		log.Println("user already exists")
-		c.AbortWithStatus(400)
-		return
-	}
-
-	//Add user to db
-	if _, err := bsql.InsertNewUser(user, pass); err != nil {
-		log.Fatal(err)
-	}
-
-	// Return 201 created code
-	c.JSON(201, "")
-}
-
-// POST
+// METHOD: POST
+// Generate API token in bres package
+// Requires Username, Password headers
 func loginClient(c *gin.Context) {
 
 	// Validate headers exist
+	// STATUS: 400 Bad Request on missing headers
 	if !bres.ValidateHeaders(c, "Username", "Password") {
 		return
 	}
@@ -79,30 +54,105 @@ func loginClient(c *gin.Context) {
 	user := c.GetHeader("Username")
 	pass := c.GetHeader("Password")
 
-	// Validate that the password and username are within the allowed characters
-	if !validateUserPassRegex(c, user, pass) {
+	// Validate userpass in allowed characters
+	// STATUS: 400 bad request on illegal characters
+	if !bres.ValidateUserPassRegex(c, user, pass) {
 		return
 	}
 
-	// If a user with that username isnt found, return 404
-	if !bsql.ValidateUserExists(user) {
+	// STATUS: 404 on nonexistant user
+	if !bsql.UserExists(user) {
 		c.AbortWithStatus(404)
 		return
 	}
 
 	// Validate the credentials the user gave
-	if !bsql.ValidateCredentials(user, pass) {
+	// STATUS: 401 Unauthorized on invalid credentials
+	if !bsql.MatchUserPass(user, pass) {
 		c.AbortWithStatus(401)
 		return
 	}
 
+	// Create the token in memory, return in JSON
+	// STATUS: 201 Created
 	c.JSON(201, gin.H{"token": bres.AddClient(c.ClientIP(), user)})
 }
 
-// POST
+// METHOD: POST
+// Insert a new user into the database
+// Requires Username, Password headers
+func registerClient(c *gin.Context) {
+
+	// Validate headers exist
+	// STATUS: 400 Bad Request on missing headers
+	if !bres.ValidateHeaders(c, "Username", "Password") {
+		return
+	}
+
+	// Grab headers
+	user := c.GetHeader("Username")
+	pass := c.GetHeader("Password")
+
+	// Validate userpass in allowed characters
+	// STATUS: 400 bad request on illegal characters
+	if !bres.ValidateUserPassRegex(c, user, pass) {
+		return
+	}
+
+	// Validate Username is unique
+	// STATUS: 400 Bad Request on non unique user
+	if bsql.UserExists(user) {
+		log.Println("user already exists")
+		c.AbortWithStatus(400)
+		return
+	}
+
+	// Add user to db
+	if _, err := bsql.InsertNewUser(user, pass); err != nil {
+		log.Fatal(err)
+	}
+
+	// STATUS: 201 Created
+	c.Status(201)
+}
+
+// METHOD: GET
+// Return all Group fields and Group Members
+// Requires Username, Token headers; user param
+func getGroup(c *gin.Context) {
+
+	// Validate userpass and Token fields exis
+	// STATUS: 401 Unauthorized on invalid token
+	// STATUS: 400 Bad Request on missing header; illegal chars
+	// STATUS: 404 on non-existant user
+	if !bres.ValidateAuthentication(c) {
+		return
+	}
+
+	// Grab user parameter
+	user := c.Param("user")
+
+	// Create return JSON
+	// STATUS: 404 Not Found if user is not in a group
+	group, ok := bsql.GetUserGroup(user)
+	if !ok {
+		c.AbortWithStatus(404)
+		return
+	}
+
+	// STATUS: 200 OK
+	c.JSON(200, group)
+}
+
+// METHOD: POST
+// Insert a new group into the database
+// Requires Username, Token headers
 func postGroup(c *gin.Context) {
 
-	// Aborts on invalid auth or headers (token and username are in all requests)
+	// Validate userpass and Token fields exis
+	// STATUS: 401 Unauthorized on invalid token
+	// STATUS: 400 Bad Request on missing header; illegal chars
+	// STATUS: 404 on non-existant user
 	if !bres.ValidateAuthentication(c) {
 		return
 	}
@@ -110,29 +160,30 @@ func postGroup(c *gin.Context) {
 	// Grab user parameter
 	user := c.GetHeader("Username")
 
-	// Verify the user exists
-	if !bsql.ValidateUserExists(user) {
-		c.AbortWithStatus(404)
-		return
-	}
-
 	// Register new group
 	if err := bsql.InsertNewGroup(user); err != nil {
 		log.Fatal(err)
 	}
 
+	// STATUS: 200 OK
 	c.Status(200)
-
 }
 
-// POST
+// METHOD: POST
+// Inserts user into a specified group
+// Requires Username, Token, ID headers
 func postGroupMember(c *gin.Context) {
-	// Aborts on invalid auth or headers (token and username are in all requests)
+
+	// Validate userpass and Token fields exis
+	// STATUS: 401 Unauthorized on invalid token
+	// STATUS: 400 Bad Request on missing header; illegal chars
+	// STATUS: 404 on non-existant user
 	if !bres.ValidateAuthentication(c) {
 		return
 	}
 
 	// Validate that ID is in the header
+	// STATUS: 400 Bad Request on missing header
 	if !bres.ValidateHeaders(c, "ID") {
 		return
 	}
@@ -141,8 +192,8 @@ func postGroupMember(c *gin.Context) {
 	user := c.GetHeader("Username")
 	id := c.GetHeader("ID")
 
-	// Verify the user exists
-	if !bsql.ValidateUserExists(user) {
+	// STATUS: 404 Not Found on non-existant group
+	if !bres.ValidateGroupExists(id) {
 		c.AbortWithStatus(404)
 		return
 	}
@@ -159,16 +210,26 @@ func postGroupMember(c *gin.Context) {
 		}
 	}
 
+	// STATUS: 200, OK
+	c.Status(200)
+
 }
 
-// POST
+// METHOD: POST
+// Updates group's coin
+// Requires Username, Token, ID headers
 func postCoin(c *gin.Context) {
-	// Aborts on invalid auth or headers (token and username are in all requests)
+
+	// Validate userpass and Token fields exis
+	// STATUS: 401 Unauthorized on invalid token
+	// STATUS: 400 Bad Request on missing header; illegal chars
+	// STATUS: 404 on non-existant user
 	if !bres.ValidateAuthentication(c) {
 		return
 	}
 
 	// Validate that ID is in the header
+	// STATUS: 400 Bad Request on missing header
 	if !bres.ValidateHeaders(c, "ID") {
 		return
 	}
@@ -177,75 +238,26 @@ func postCoin(c *gin.Context) {
 	user := c.GetHeader("Username")
 	id := c.GetHeader("ID")
 
-	// Verify the user exists
-	if !bsql.ValidateUserExists(user) {
+	// STATUS: 404 Not Found on non-existant group
+	if !bres.ValidateGroupExists(id) {
 		c.AbortWithStatus(404)
 		return
 	}
 
-	// Return a Forbidden status code if someone who isnt the coin holder makes request
+	// Validate the user is authorized to make a coin request
+	// STATUS: 403 Forbidden on not high enough credentials
 	if !bres.ValidateCoinRequest(c, user, id) {
 		c.AbortWithStatus(403)
 		return
 	}
 
+	// TODO: rewrite this753f04ed-d410-4b77-b091-8a0e547eefc1
 	if err1, err2 := bsql.UpdateCoin(user, id); err1 != nil || err2 != nil {
 		log.Fatal(err1)
 		log.Fatal(err2)
 	}
 
+	// STATUS: 201 Created
 	c.Status(201)
 
-}
-
-// GET
-func getGroup(c *gin.Context) {
-
-	// Aborts on invalid auth or headers (token and username are in all requests)
-	if !bres.ValidateAuthentication(c) {
-		return
-	}
-
-	// Grab user parameter
-	user := c.Param("user")
-
-	// Handle a bad username that contains illegal characters
-	if !validateUserPassRegex(c, user, "") {
-		return
-	}
-
-	// Verify the user exists
-	if !bsql.ValidateUserExists(user) {
-		c.AbortWithStatus(404)
-		return
-	}
-
-	// Create group struct
-	group, ok := bsql.GetUserGroup(user)
-	if !ok {
-		c.AbortWithStatus(404)
-		return
-	}
-
-	c.JSON(200, group)
-}
-
-func validateUserPassRegex(c *gin.Context, username string, password string) bool {
-	// Handle a bad username that contains illegal characters
-	if regex, _ := regexp.Compile("[^A-Za-z0-9]+"); regex.MatchString(username) {
-		log.Println("username does not follow guidelines")
-		c.AbortWithStatus(400)
-		return false
-	}
-
-	//See if password contains any whitespaces
-	if password != "" {
-		if regex, _ := regexp.Compile("\\s+"); regex.MatchString(password) {
-			log.Println("password does not follow guidelines")
-			c.AbortWithStatus(400)
-			return false
-		}
-	}
-
-	return true
 }

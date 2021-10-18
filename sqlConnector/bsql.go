@@ -1,3 +1,4 @@
+// Helper function package for executing mysql queries
 package bsql
 
 import (
@@ -7,9 +8,10 @@ import (
 	"log"
 )
 
+// SQL Database pointer
 var db *sql.DB
 
-//SQL table structs
+// SQL: table _group
 type Group struct {
 	ID          string   `json:"id"`
 	Token       int      `json:"coin"`
@@ -18,11 +20,13 @@ type Group struct {
 	Members     []string `json:"members"`
 }
 
+// SQL: table group_member
 type GroupMember struct {
 	GroupID  string `json:"group_id"`
 	Username string `json:"username"`
 }
 
+// SQL: table user
 type User struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -34,10 +38,31 @@ func InsertNewUser(user string, pass string) (sql.Result, error) {
 	return insertUserQuery.Exec(user, pass)
 }
 
+
+var groupExistsQuery *sql.Stmt
+
+func GroupExists(id string) bool {
+
+	// Return a value into group if group exists
+	var group string
+	err := groupExistsQuery.QueryRow(group).Scan(&group)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Println("group does not exist")
+			return false
+		}
+		log.Fatal(err)
+	}
+	
+	return true
+}
+
+
 var userExistsQuery *sql.Stmt
 
-func ValidateUserExists(user string) bool {
-	//Temp fix, .Err() does not seem to return ErrNoRows properly
+func UserExists(user string) bool {
+
+	// Return a value into username if the user exists
 	var username string
 	err := userExistsQuery.QueryRow(user).Scan(&username)
 	if err != nil {
@@ -51,9 +76,10 @@ func ValidateUserExists(user string) bool {
 	return true
 }
 
+
 var matchUserPassQuery *sql.Stmt
 
-func ValidateCredentials(user string, pass string) bool {
+func MatchUserPass(user string, pass string) bool {
 	var username string
 	err := matchUserPassQuery.QueryRow(user, pass).Scan(&username)
 	if err != nil {
@@ -66,6 +92,7 @@ func ValidateCredentials(user string, pass string) bool {
 
 	return true
 }
+
 
 var userGroupQuery *sql.Stmt
 var groupUsersQuery *sql.Stmt
@@ -102,6 +129,7 @@ func GetUserGroup(user string) (*Group, bool) {
 	return &group, true
 }
 
+
 var insertGroupMemberQuery *sql.Stmt
 
 func InsertGroupMember(user string, id string) error {
@@ -113,6 +141,7 @@ func InsertGroupMember(user string, id string) error {
 
 	return nil
 }
+
 
 var insertGroupQuery *sql.Stmt
 
@@ -134,12 +163,14 @@ func InsertNewGroup(user string) error {
 	return nil
 }
 
+
 var selectCoinHolderQuery *sql.Stmt
 
 func SelectCoinHolder(user string, id string) error {
 	var username string
 	return selectCoinHolderQuery.QueryRow(user, id).Scan(&username)
 }
+
 
 var updateCoinQuery *sql.Stmt
 var updateCoinHolderQuery *sql.Stmt
@@ -150,6 +181,7 @@ func UpdateCoin(user string, id string) (error, error) {
 	return err1, err2
 
 }
+
 
 func Establishconnection() {
 
@@ -178,6 +210,7 @@ func Establishconnection() {
 	log.Println("Connected to Database!")
 
 }
+
 
 //Setup all prepared statements
 func setupPrepStates() {
@@ -229,6 +262,11 @@ func setupPrepStates() {
 	}
 
 	updateCoinHolderQuery, err = db.Prepare("update _group set coin_holder=(select username from group_member where group_id=? order by rand() limit 1) where id=?")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	groupExistsQuery, err = db.Prepare("select id from _group where _group.id=?")
 	if err != nil {
 		log.Fatal(err)
 	}
