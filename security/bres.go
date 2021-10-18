@@ -1,5 +1,4 @@
 // Rest Endpoint Security helper function package
-// Protects public API by validating requests
 package bres
 
 import (
@@ -77,11 +76,13 @@ func ValidateHeaders(c *gin.Context, args ...string) bool {
 
 // General authentication validation
 // Validate API Tokens
-func ValidateAuthentication(c *gin.Context) bool {
+func ValidateAuthentication(c *gin.Context) (bool, error) {
+
+	var err error
 
 	// Validate all headers are present in request
 	if !ValidateHeaders(c, "Token", "Username") {
-		return false
+		return false, err
 	}
 
 	// Grab auth fields
@@ -90,15 +91,15 @@ func ValidateAuthentication(c *gin.Context) bool {
 
 	// Validate user is in allowed characters
 	// STATUS: 400 Bad Request on illegal characters
-	if !ValidateUserPassRegex(c, username, "") {
-		return false
+	if ok, err := ValidateUserPassRegex(c, username, ""); !ok {
+		return !ok, err
 	}
 
 	// Verify the user exists
 	// STATUS: 404 Not Found on non-existant user
-	if !bsql.UserExists(username) {
+	if ok, err := bsql.UserExists(username); !ok {
 		c.AbortWithStatus(404)
-		return false
+		return !ok, err
 	}
 
 	// Check if api token exists
@@ -106,7 +107,7 @@ func ValidateAuthentication(c *gin.Context) bool {
 	if _, ok := tokens[token]; !ok {
 		log.Println("invalid token")
 		c.AbortWithStatus(401)
-		return false
+		return !ok, err
 	}
 
 	// Validate token field
@@ -120,51 +121,42 @@ func ValidateAuthentication(c *gin.Context) bool {
 		// Remove invalidated Token
 		delete(tokens, token)
 		c.AbortWithStatus(401)
-		return false
+		return false, err
 
 	}
-	return true
+	return true, err
 }
-
-func ValidateGroupExists(id string) bool {
-	return bsql.GroupExists(id)
-}
-
 
 // Check if user is capable of making a coin request
-func ValidateCoinRequest(c *gin.Context, user string, id string) bool {
+func ValidateCoinRequest(c *gin.Context, user string, id string) (bool, error) {
 	err := bsql.SelectCoinHolder(user, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return false
-
+			return false, nil
 		}
-		log.Fatal(err)
 	}
-
-	return true
-
+	return true, err
 }
 
-func ValidateUserPassRegex(c *gin.Context, username string, password string) bool {
+func ValidateUserPassRegex(c *gin.Context, username string, password string) (bool, error) {
 
 	// Handle a bad username that contains illegal characters
-	if regex, _ := regexp.Compile("[^A-Za-z0-9]+"); regex.MatchString(username) {
+	if regex, err := regexp.Compile("[^A-Za-z0-9]+"); regex.MatchString(username) {
 		log.Println("username does not follow guidelines")
 		c.AbortWithStatus(400)
-		return false
+		return false, err
 	}
 
 	//See if password contains any whitespaces
 	if password != "" {
-		if regex, _ := regexp.Compile("\\s+"); regex.MatchString(password) {
+		if regex, err := regexp.Compile("\\s+"); regex.MatchString(password) {
 			log.Println("password does not follow guidelines")
 			c.AbortWithStatus(400)
-			return false
+			return false, err
 		}
 	}
 
-	return true
+	return true, nil
 }
 
 func configLogger() {

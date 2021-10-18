@@ -32,75 +32,73 @@ type User struct {
 	Password string `json:"password"`
 }
 
-var insertUserQuery *sql.Stmt
-
-func InsertNewUser(user string, pass string) (sql.Result, error) {
-	return insertUserQuery.Exec(user, pass)
+func InsertNewUser(user string, pass string) error {
+	_, err := insertUserQuery.Exec(user, pass)
+	return err
 }
 
+func DeleteGroupMember(member string, id string) (sql.Result, error) {
+	return deleteGroupMemberQuery.Exec(member, id)
+}
 
-var groupExistsQuery *sql.Stmt
+func UserGroupCreator(user string, id string) (bool, error) {
+	var group_id string
+	err := selectGroupCreatorQuery.QueryRow(user, id).Scan(&group_id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+	}
+	return true, err
+}
 
-func GroupExists(id string) bool {
+func GroupExists(id string) (bool, error) {
 
 	// Return a value into group if group exists
 	var group string
-	err := groupExistsQuery.QueryRow(group).Scan(&group)
+	err := selectGroupQuery.QueryRow(id).Scan(&group)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Println("group does not exist")
-			return false
+			return false, nil
 		}
-		log.Fatal(err)
 	}
-	
-	return true
+
+	return true, err
 }
 
-
-var userExistsQuery *sql.Stmt
-
-func UserExists(user string) bool {
+func UserExists(user string) (bool, error) {
 
 	// Return a value into username if the user exists
 	var username string
-	err := userExistsQuery.QueryRow(user).Scan(&username)
+	err := selectUserQuery.QueryRow(user).Scan(&username)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Println("user does not exist")
-			return false
+			return false, nil
 		}
-		log.Fatal(err)
 	}
 
-	return true
+	return true, err
 }
 
-
-var matchUserPassQuery *sql.Stmt
-
-func MatchUserPass(user string, pass string) bool {
+func MatchUserPass(user string, pass string) (bool, error) {
 	var username string
-	err := matchUserPassQuery.QueryRow(user, pass).Scan(&username)
+	err := selectUserPassQuery.QueryRow(user, pass).Scan(&username)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Println("Credentials invalid")
-			return false
+			return false, nil
 		}
-		log.Fatal(err)
 	}
 
-	return true
+	return true, err
 }
 
-
-var userGroupQuery *sql.Stmt
-var groupUsersQuery *sql.Stmt
-
-func GetUserGroup(user string) (*Group, bool) {
+func GetUserGroup(user string) (*Group, bool, error) {
 	var group Group
 
-	err := userGroupQuery.QueryRow(user).Scan(
+	err := selectUserGroupsQuery.QueryRow(user).Scan(
 		&group.ID,
 		&group.Token,
 		&group.Creator,
@@ -109,14 +107,13 @@ func GetUserGroup(user string) (*Group, bool) {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Println("group not found")
-			return nil, false
+			return &group, false, nil
 		}
-		log.Fatal(err)
 	}
 
-	rows, err := groupUsersQuery.Query(group.ID)
+	rows, err := selectGroupMembersQuery.Query(group.ID)
 	if err != nil {
-		log.Fatal(err)
+		return nil, false, err
 	}
 	defer rows.Close()
 
@@ -126,64 +123,59 @@ func GetUserGroup(user string) (*Group, bool) {
 		group.Members = append(group.Members, username)
 	}
 
-	return &group, true
+	return &group, true, err
 }
-
-
-var insertGroupMemberQuery *sql.Stmt
 
 func InsertGroupMember(user string, id string) error {
-
 	_, err := insertGroupMemberQuery.Exec(id, user)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
-
-var insertGroupQuery *sql.Stmt
-
 func InsertNewGroup(user string) error {
+
+	var err error
 
 	// group id
 	id := uuid.New().String()
 	tokenDefaultValue := 1
 
-	_, err := insertGroupQuery.Exec(id, tokenDefaultValue, user, user)
+	_, err = insertGroupQuery.Exec(id, tokenDefaultValue, user, user)
 	if err != nil {
 		return err
 	}
 
-	if err2 := InsertGroupMember(user, id); err2 != nil {
-		return err2
+	if err = InsertGroupMember(user, id); err != nil {
+		return err
 	}
 
-	return nil
+	return err
 }
-
-
-var selectCoinHolderQuery *sql.Stmt
 
 func SelectCoinHolder(user string, id string) error {
 	var username string
 	return selectCoinHolderQuery.QueryRow(user, id).Scan(&username)
 }
 
-
-var updateCoinQuery *sql.Stmt
-var updateCoinHolderQuery *sql.Stmt
-
 func UpdateCoin(user string, id string) (error, error) {
 	_, err1 := updateCoinQuery.Exec(id, user)
 	_, err2 := updateCoinHolderQuery.Exec(id, id)
 	return err1, err2
+}
+
+func UserInGroup(user string, id string) (bool, error) {
+	var username string
+	err := selectGroupFromUserQuery.QueryRow(id, user).Scan(&username)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+	}
+	return true, err
 
 }
 
-
-func Establishconnection() {
+func Establishconnection() error {
+	var err error
 
 	cfg := mysql.Config{
 		User:                 "root",
@@ -194,83 +186,116 @@ func Establishconnection() {
 		AllowNativePasswords: true,
 	}
 
-	var err error
 	db, err = sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	pingErr := db.Ping()
-	if pingErr != nil {
-		log.Fatal(pingErr)
+	if err = db.Ping(); err != nil {
+		return err
 	}
 
-	setupPrepStates()
+	if err = setupPrepStates(); err != nil {
+		return err
+	}
 	configLogger()
 	log.Println("Connected to Database!")
 
+	return err
 }
 
+var (
+	insertUserQuery,
+	selectUserQuery,
+	selectUserPassQuery,
+	selectUserGroupsQuery,
+	selectGroupMembersQuery,
+	insertGroupQuery,
+	insertGroupMemberQuery,
+	selectCoinHolderQuery,
+	updateCoinQuery,
+	updateCoinHolderQuery,
+	selectGroupQuery,
+	selectGroupCreatorQuery,
+	selectGroupFromUserQuery,
+	deleteGroupMemberQuery *sql.Stmt
+)
 
 //Setup all prepared statements
-func setupPrepStates() {
+func setupPrepStates() error {
 	var err error
 
 	insertUserQuery, err = db.Prepare("insert into user(username, password) values (?, ?)")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	userExistsQuery, err = db.Prepare("select username from user where username=?")
+	selectUserQuery, err = db.Prepare("select username from user where username=?")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	matchUserPassQuery, err = db.Prepare("select username from user where username=? and password=?")
+	selectUserPassQuery, err = db.Prepare("select username from user where username=? and password=?")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	userGroupQuery, err = db.Prepare("select * from _group where _group.id=(select group_id from group_member where username=?)")
+	selectUserGroupsQuery, err = db.Prepare("select * from _group where _group.id=(select group_id from group_member where username=?)")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	groupUsersQuery, err = db.Prepare("select username from group_member where group_id=?")
+	selectGroupMembersQuery, err = db.Prepare("select username from group_member where group_id=?")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	insertGroupQuery, err = db.Prepare("insert into _group(id, coin, creator, coin_holder) values (?, ?, ?, ?)")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	insertGroupMemberQuery, err = db.Prepare("insert into group_member(group_id, username) values (?, ?)")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	selectCoinHolderQuery, err = db.Prepare("select coin_holder from _group where coin_holder=? and id=?")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	updateCoinQuery, err = db.Prepare("update _group set _group.coin = (_group.coin + 1) where id=? and coin_holder=?")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	updateCoinHolderQuery, err = db.Prepare("update _group set coin_holder=(select username from group_member where group_id=? order by rand() limit 1) where id=?")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	groupExistsQuery, err = db.Prepare("select id from _group where _group.id=?")
+	selectGroupQuery, err = db.Prepare("select id from _group where _group.id=?")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
+	selectGroupCreatorQuery, err = db.Prepare("select id from _group where creator=? and id=?")
+	if err != nil {
+		return err
+	}
+
+	selectGroupFromUserQuery, err = db.Prepare("select * from group_member where group_id=? and username=?")
+	if err != nil {
+		return err
+	}
+
+	deleteGroupMemberQuery, err = db.Prepare("delete from group_member where username=? and group_id=?")
+	if err != nil {
+		return err
+	}
+
+	return err
 }
 
 func configLogger() {

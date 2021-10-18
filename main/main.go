@@ -1,4 +1,3 @@
-// Define all API endpoints and their algorithms
 package main
 
 import (
@@ -15,7 +14,9 @@ func main() {
 	log.SetFlags(log.Lmsgprefix)
 
 	//Establish connection to local db using ./sqlConnector package
-	bsql.Establishconnection()
+	if err := bsql.Establishconnection(); err != nil {
+		log.Fatal(err)
+	}
 
 	//Establish token pool
 	bres.InitializeTokenMap()
@@ -34,6 +35,7 @@ func main() {
 	router.POST(group+"create", postGroup)
 	router.POST(group+"join", postGroupMember)
 	router.POST(group+"coin", postCoin)
+	router.DELETE(group+"kick/:user", delGroupMember)
 
 	//port 8080
 	router.Run()
@@ -56,19 +58,31 @@ func loginClient(c *gin.Context) {
 
 	// Validate userpass in allowed characters
 	// STATUS: 400 bad request on illegal characters
-	if !bres.ValidateUserPassRegex(c, user, pass) {
+	ok, err := bres.ValidateUserPassRegex(c, user, pass)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		return
 	}
 
 	// STATUS: 404 on nonexistant user
-	if !bsql.UserExists(user) {
+	ok, err = bsql.UserExists(user)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		c.AbortWithStatus(404)
 		return
 	}
 
 	// Validate the credentials the user gave
 	// STATUS: 401 Unauthorized on invalid credentials
-	if !bsql.MatchUserPass(user, pass) {
+	ok, err = bsql.MatchUserPass(user, pass)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		c.AbortWithStatus(401)
 		return
 	}
@@ -95,20 +109,28 @@ func registerClient(c *gin.Context) {
 
 	// Validate userpass in allowed characters
 	// STATUS: 400 bad request on illegal characters
-	if !bres.ValidateUserPassRegex(c, user, pass) {
+	ok, err := bres.ValidateUserPassRegex(c, user, pass)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		return
 	}
 
 	// Validate Username is unique
 	// STATUS: 400 Bad Request on non unique user
-	if bsql.UserExists(user) {
+	ok, err = bsql.UserExists(user)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if ok {
 		log.Println("user already exists")
 		c.AbortWithStatus(400)
 		return
 	}
 
 	// Add user to db
-	if _, err := bsql.InsertNewUser(user, pass); err != nil {
+	if err := bsql.InsertNewUser(user, pass); err != nil {
 		log.Fatal(err)
 	}
 
@@ -125,7 +147,11 @@ func getGroup(c *gin.Context) {
 	// STATUS: 401 Unauthorized on invalid token
 	// STATUS: 400 Bad Request on missing header; illegal chars
 	// STATUS: 404 on non-existant user
-	if !bres.ValidateAuthentication(c) {
+	ok, err := bres.ValidateAuthentication(c)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		return
 	}
 
@@ -134,7 +160,10 @@ func getGroup(c *gin.Context) {
 
 	// Create return JSON
 	// STATUS: 404 Not Found if user is not in a group
-	group, ok := bsql.GetUserGroup(user)
+	group, ok, err := bsql.GetUserGroup(user)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if !ok {
 		c.AbortWithStatus(404)
 		return
@@ -153,15 +182,29 @@ func postGroup(c *gin.Context) {
 	// STATUS: 401 Unauthorized on invalid token
 	// STATUS: 400 Bad Request on missing header; illegal chars
 	// STATUS: 404 on non-existant user
-	if !bres.ValidateAuthentication(c) {
+	ok, err := bres.ValidateAuthentication(c)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		return
 	}
 
 	// Grab user parameter
 	user := c.GetHeader("Username")
 
+	// STATUS 403 Forbidden if a user is already a group owner
+	ok, err = bsql.GroupExists(user)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
+		c.AbortWithStatus(403)
+		return
+	}
+
 	// Register new group
-	if err := bsql.InsertNewGroup(user); err != nil {
+	if err = bsql.InsertNewGroup(user); err != nil {
 		log.Fatal(err)
 	}
 
@@ -178,13 +221,18 @@ func postGroupMember(c *gin.Context) {
 	// STATUS: 401 Unauthorized on invalid token
 	// STATUS: 400 Bad Request on missing header; illegal chars
 	// STATUS: 404 on non-existant user
-	if !bres.ValidateAuthentication(c) {
+	ok, err := bres.ValidateAuthentication(c)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		return
 	}
 
 	// Validate that ID is in the header
 	// STATUS: 400 Bad Request on missing header
-	if !bres.ValidateHeaders(c, "ID") {
+	ok = bres.ValidateHeaders(c, "ID")
+	if !ok {
 		return
 	}
 
@@ -193,14 +241,18 @@ func postGroupMember(c *gin.Context) {
 	id := c.GetHeader("ID")
 
 	// STATUS: 404 Not Found on non-existant group
-	if !bres.ValidateGroupExists(id) {
+	ok, err = bsql.GroupExists(id)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		c.AbortWithStatus(404)
 		return
 	}
 
-	// insert group member to group. if err, see if duplicate entry (group mems + id must be unique)
-	if err := bsql.InsertGroupMember(user, id); err != nil {
-		if _, ok := err.(*mysql.MySQLError); !ok {
+	// Err on non-unique entry ( user cannot be in same group twice)
+	if err = bsql.InsertGroupMember(user, id); err != nil {
+		if _, ok = err.(*mysql.MySQLError); !ok {
 			log.Fatal(err)
 		}
 		if err.(*mysql.MySQLError).Number == 1062 {
@@ -224,13 +276,17 @@ func postCoin(c *gin.Context) {
 	// STATUS: 401 Unauthorized on invalid token
 	// STATUS: 400 Bad Request on missing header; illegal chars
 	// STATUS: 404 on non-existant user
-	if !bres.ValidateAuthentication(c) {
+	ok, err := bres.ValidateAuthentication(c)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		return
 	}
 
 	// Validate that ID is in the header
 	// STATUS: 400 Bad Request on missing header
-	if !bres.ValidateHeaders(c, "ID") {
+	if !bres.ValidateHeaders(c, "ID")  {
 		return
 	}
 
@@ -239,14 +295,22 @@ func postCoin(c *gin.Context) {
 	id := c.GetHeader("ID")
 
 	// STATUS: 404 Not Found on non-existant group
-	if !bres.ValidateGroupExists(id) {
+	ok, err = bsql.GroupExists(id)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if ok {
 		c.AbortWithStatus(404)
 		return
 	}
 
 	// Validate the user is authorized to make a coin request
 	// STATUS: 403 Forbidden on not high enough credentials
-	if !bres.ValidateCoinRequest(c, user, id) {
+	ok, err = bres.ValidateCoinRequest(c, user, id)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
 		c.AbortWithStatus(403)
 		return
 	}
@@ -259,5 +323,80 @@ func postCoin(c *gin.Context) {
 
 	// STATUS: 201 Created
 	c.Status(201)
+
+}
+
+// METHOD: DEL
+// Delete a member from a group
+// Requires Username, Token, ID headers, member param
+func delGroupMember(c *gin.Context) {
+
+	// Validate userpass and Token fields exis
+	// STATUS: 401 Unauthorized on invalid token
+	// STATUS: 400 Bad Request on missing header; illegal chars
+	// STATUS: 404 on non-existant user
+	ok, err := bres.ValidateAuthentication(c)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
+		return
+	}
+
+	// Validate that ID is in the header
+	// STATUS: 400 Bad Request on missing header
+	ok = bres.ValidateHeaders(c, "ID")
+	if !ok {
+		return
+	}
+
+	// Grab user and group id
+	user := c.GetHeader("Username")
+	id := c.GetHeader("ID")
+	member := c.Param("user")
+
+	// STATUS 404 Not found on non-existant member
+	ok, err = bsql.UserExists(member)
+	if err != nil {
+		return
+	}
+	if !ok {
+		c.AbortWithStatus(404)
+		return
+	}
+
+	// STATUS 404 Not Found on non-existant group
+	ok, err = bsql.GroupExists(id)
+	if err != nil {
+		return
+	}
+	if !ok {
+		c.AbortWithStatus(404)
+		return
+	}
+
+	// STATUS 404 User not found in group
+	ok, err = bsql.UserInGroup(member, id)
+	if err != nil {
+		return
+	}
+	if !ok {
+		c.AbortWithStatus(404)
+		return
+	}
+
+	// STATUS 403 Forbidden user not group creator
+	ok, err = bsql.UserGroupCreator(user, id)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !ok {
+		c.AbortWithStatus(403)
+		return
+	}
+
+	_, err = bsql.DeleteGroupMember(member, id)
+	err != nil{log.Fatal(err)}
+	c.Status(200)
 
 }
